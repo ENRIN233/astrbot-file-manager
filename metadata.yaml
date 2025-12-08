@@ -1,0 +1,6 @@
+name: file_manager
+display_name: 文件夹文件管理器
+version: 1.0.0
+author: ENRIN233
+desc: 监控指定文件夹，支持列出和发送文件
+repo: https://github.com/ENRIN233/astrbot-file-manager
