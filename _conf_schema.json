@@ -1,0 +1,26 @@
+{
+  "watch_folder": {
+    "description": "要监听的文件夹路径",
+    "type": "string",
+    "default": "./files",
+    "hint": "请输入完整的绝对路径或相对于AstrBot根目录的相对路径"
+  },
+  "max_cache_time": {
+    "description": "文件列表缓存时间（秒）",
+    "type": "int",
+    "default": 300,
+    "hint": "文件列表缓存的有效时间，减少频繁读取文件系统"
+  },
+  "allowed_extensions": {
+    "description": "允许的文件扩展名（逗号分隔）",
+    "type": "string", 
+    "default": "txt,pdf,doc,docx,jpg,jpeg,png,gif,mp3,mp4",
+    "hint": "只显示指定扩展名的文件，留空则显示所有文件"
+  },
+  "max_file_size_mb": {
+    "description": "最大文件大小限制（MB）",
+    "type": "int",
+    "default": 50,
+    "hint": "超过此大小的文件将不会被发送"
+  }
+}
