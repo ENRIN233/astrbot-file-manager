@@ -1,26 +1,31 @@
 import os
 import time
-import glob
-from typing import Dict, List, Optional, Tuple
+import asyncio
 from pathlib import Path
+from typing import Dict, List, Optional
 
 from astrbot.api.event import filter, AstrMessageEvent
-from astrbot.api.star import Context, Star, register
+from astrbot.api.star import Context, Star, StarTools
 from astrbot.api import logger
 from astrbot.api import AstrBotConfig
+from astrbot.api.message_components import File
+from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import AiocqhttpMessageEvent
 
-class FileManagerPlugin(Star):
+class FileManager(Star):
+    """文件夹文件管理插件"""
+    
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
-        # 缓存结构：{session_id: {"timestamp": 时间戳, "files": [文件路径列表]}}
         self.file_cache: Dict[str, Dict] = {}
-        # 确保监控文件夹存在
         self._ensure_watch_folder_exists()
         
     def _ensure_watch_folder_exists(self):
         """确保监控文件夹存在"""
-        watch_folder = self.config.get("watch_folder", "./files")
+        # 使用 StarTools 获取插件专属数据目录
+        default_folder = StarTools.get_data_dir("file_manager") / "files"
+        watch_folder = self.config.get("watch_folder", str(default_folder))
+        
         try:
             Path(watch_folder).mkdir(parents=True, exist_ok=True)
             logger.info(f"监控文件夹已就绪: {watch_folder}")
@@ -29,7 +34,8 @@ class FileManagerPlugin(Star):
 
     def _get_watch_folder(self) -> Path:
         """获取监控文件夹路径"""
-        return Path(self.config.get("watch_folder", "./files"))
+        default_folder = StarTools.get_data_dir("file_manager") / "files"
+        return Path(self.config.get("watch_folder", str(default_folder)))
 
     def _get_allowed_extensions(self) -> List[str]:
         """获取允许的文件扩展名列表"""
@@ -142,21 +148,17 @@ class FileManagerPlugin(Star):
             # 检查平台是否为 aiocqhttp
             if event.get_platform_name() == "aiocqhttp" and event.get_group_id():
                 logger.info("检测到aiocqhttp平台和群组ID，尝试直接调用API发送群文件")
-                try:
-                    from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
-                        AiocqhttpMessageEvent,
-                    )
+                
+                if isinstance(event, AiocqhttpMessageEvent):
+                    client = event.bot
+                    group_id = event.get_group_id()
+                    
+                    # 根据文件大小计算超时时间：基础60秒 + 每10MB额外30秒
+                    timeout_seconds = 60 + int(file_size / 10) * 30
+                    logger.info(f"上传 {file_size:.1f}MB 文件，设置超时时间: {timeout_seconds}秒")
 
-                    if isinstance(event, AiocqhttpMessageEvent):
-                        client = event.bot
-                        group_id = event.get_group_id()
-                        
-                        # 根据文件大小计算超时时间：基础60秒 + 每10MB额外30秒
-                        timeout_seconds = 60 + int(file_size / 10) * 30
-                        logger.info(f"上传 {file_size:.1f}MB 文件，设置超时时间: {timeout_seconds}秒")
-
+                    try:
                         # 使用平台API上传文件
-                        import asyncio
                         upload_result = await asyncio.wait_for(
                             client.upload_group_file(
                                 group_id=group_id, file=str(file_path), name=file_name
@@ -166,29 +168,26 @@ class FileManagerPlugin(Star):
                         logger.info(f"aiocqhttp upload_group_file result: {upload_result}")
                         logger.info(f"已调用 aiocqhttp upload_group_file API 上传文件 {file_name} 到群组 {group_id}")
                         
-                except asyncio.TimeoutError:
-                    logger.error(f"上传文件超时（{timeout_seconds}秒），文件大小: {file_size:.1f}MB")
-                    yield event.plain_result(
-                        f"文件上传超时，文件过大({file_size:.1f}MB)，正在使用备用方式发送..."
-                    )
-                    # 回退到标准方法
-                    from astrbot.api.message_components import File
-                    yield event.chain_result([File(name=file_name, file=str(file_path))])
-                    
-                except Exception as api_e:
-                    error_type = type(api_e).__name__
-                    logger.error(f"调用 aiocqhttp API 发送文件失败({error_type}): {api_e}")
-                    yield event.plain_result(
-                        f"通过API发送文件失败({error_type})，正在使用备用方式..."
-                    )
-                    # 回退到标准方法
-                    from astrbot.api.message_components import File
-                    yield event.chain_result([File(name=file_name, file=str(file_path))])
+                    except asyncio.TimeoutError:
+                        logger.error(f"上传文件超时（{timeout_seconds}秒），文件大小: {file_size:.1f}MB")
+                        yield event.plain_result(
+                            f"文件上传超时，文件过大({file_size:.1f}MB)，正在使用备用方式发送..."
+                        )
+                        # 回退到标准方法
+                        yield event.chain_result([File(name=file_name, file=str(file_path))])
+                        
+                    except Exception as api_e:
+                        error_type = type(api_e).__name__
+                        logger.error(f"调用 aiocqhttp API 发送文件失败({error_type}): {api_e}")
+                        yield event.plain_result(
+                            f"通过API发送文件失败({error_type})，正在使用备用方式..."
+                        )
+                        # 回退到标准方法
+                        yield event.chain_result([File(name=file_name, file=str(file_path))])
                     
             else:
                 # 非aiocqhttp平台或私聊，使用标准File组件
                 logger.info("使用标准 File 组件发送方式")
-                from astrbot.api.message_components import File
                 yield event.chain_result([File(name=file_name, file=str(file_path))])
 
         except Exception as e:
@@ -312,8 +311,3 @@ class FileManagerPlugin(Star):
         except Exception as e:
             logger.error(f"获取文件夹信息失败: {e}")
             yield event.plain_result("❌ 获取文件夹信息时发生错误。")
-
-@register("file_manager", "Assistant", "文件夹文件管理插件", "1.0.0")
-class FileManager(FileManagerPlugin):
-    def __init__(self, context: Context, config: AstrBotConfig):
-        super().__init__(context, config)
