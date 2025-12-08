@@ -1,6 +1,6 @@
 name: astrbot_plugin_file_manager
 display_name: 文件夹文件管理器
 version: 1.0.0
-author: ENRIN233
-desc: 监控指定文件夹，支持列出和发送文件
-repo: 一个用于AstrBot的根目录文件夹内文件管理插件，可以监控指定文件夹并支持文件列表查看和文件发送功能。
+author: Enrin
+desc: 一个用于AstrBot的根目录文件夹内文件管理插件，可以监控指定文件夹并支持文件列表查看和文件发送功能。
+repo: https://github.com/ENRIN233/astrbot-file-manager
