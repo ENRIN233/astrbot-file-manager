@@ -130,6 +130,7 @@ class FileManager(Star):
             size_bytes /= 1024.0
         return f"{size_bytes:.1f} TB"
 
+    # ================= 改造后的安全发送核心 =================
     async def _send_file(self, event: AstrMessageEvent, file_path: Path, file_name: str = None):
         """统一的文件发送方法"""
         if file_name is None:
@@ -145,29 +146,46 @@ class FileManager(Star):
                     f"⚠️ 文件大小为 {file_size:.2f}MB，超过建议的90MB，可能无法发送"
                 )
 
-            # 检查平台是否为 aiocqhttp
-            if event.get_platform_name() == "aiocqhttp" and event.get_group_id():
-                logger.info("检测到aiocqhttp平台和群组ID，尝试直接调用API发送群文件")
+            # 新增：WSL 跨系统路径翻译
+            linux_path = str(file_path).replace("\\", "/")
+            if linux_path.lower().startswith("c:/"):
+                linux_path = "/mnt/c/" + linux_path[3:]
+            elif linux_path.startswith("/C:/"):
+                linux_path = "/mnt/c/" + linux_path[4:]
+
+            # 检查平台是否为 aiocqhttp（移除对 event.get_group_id() 的限制，允许私聊直传）
+            if event.get_platform_name() == "aiocqhttp":
+                logger.info("检测到aiocqhttp平台，尝试直接调用API发送文件")
                 
                 if isinstance(event, AiocqhttpMessageEvent):
                     client = event.bot
                     group_id = event.get_group_id()
+                    sender_id = event.get_sender_id()
                     
                     # 根据文件大小计算超时时间：基础60秒 + 每10MB额外30秒
                     timeout_seconds = 60 + int(file_size / 10) * 30
                     logger.info(f"上传 {file_size:.1f}MB 文件，设置超时时间: {timeout_seconds}秒")
 
                     try:
-                        # 使用平台API上传文件
-                        upload_result = await asyncio.wait_for(
-                            client.upload_group_file(
-                                group_id=group_id, file=str(file_path), name=file_name
-                            ),
-                            timeout=timeout_seconds,
-                        )
-                        logger.info(f"aiocqhttp upload_group_file result: {upload_result}")
-                        logger.info(f"已调用 aiocqhttp upload_group_file API 上传文件 {file_name} 到群组 {group_id}")
-                        
+                        if group_id:
+                            # 群聊直传
+                            upload_result = await asyncio.wait_for(
+                                client.upload_group_file(
+                                    group_id=group_id, file=linux_path, name=file_name
+                                ),
+                                timeout=timeout_seconds,
+                            )
+                            logger.info(f"已调用 aiocqhttp upload_group_file API 上传文件 {file_name} 到群组 {group_id}")
+                        else:
+                            # 私聊直传
+                            upload_result = await asyncio.wait_for(
+                                client.call_api(
+                                    "upload_private_file", user_id=int(sender_id), file=linux_path, name=file_name
+                                ),
+                                timeout=timeout_seconds,
+                            )
+                            logger.info(f"已调用 aiocqhttp upload_private_file API 上传文件 {file_name} 到私聊 {sender_id}")
+                            
                     except asyncio.TimeoutError:
                         logger.error(f"上传文件超时（{timeout_seconds}秒），文件大小: {file_size:.1f}MB")
                         yield event.plain_result(
@@ -186,7 +204,7 @@ class FileManager(Star):
                         yield event.chain_result([File(name=file_name, file=str(file_path))])
                     
             else:
-                # 非aiocqhttp平台或私聊，使用标准File组件
+                # 非aiocqhttp平台，使用标准File组件
                 logger.info("使用标准 File 组件发送方式")
                 yield event.chain_result([File(name=file_name, file=str(file_path))])
 
@@ -202,6 +220,7 @@ class FileManager(Star):
                 )
             else:
                 yield event.plain_result(f"发送文件失败: {error_msg}")
+    # ============================================================
 
     @filter.command("listfiles")
     async def list_files(self, event: AstrMessageEvent):
